@@ -14,7 +14,8 @@ extends CharacterBody3D
 ## cadence follows real speed, he banks into turns, and the shirt tail
 ## rides a damped spring.
 ## He walks where the camera looks. No combat, no health - the office is a
-## place to think, not to fight.
+## place to think, not to fight. A footstep lands every time the stride
+## crosses its beat, so the office can put iron under his shoes.
 
 const MAT := preload("res://shaders/ps1_mat.gdshader")
 const SPEED := 4.6
@@ -31,6 +32,8 @@ const COLLAR := Color(0.77, 0.74, 0.64)     # the collar flaps, palest khaki
 const BROW_T := Color(0.70, 0.65, 0.58)     # the brow ridge, shaded skin
 const WALKIE := Color(0.12, 0.12, 0.13)     # the radio on the belt
 const KEYS := Color(0.24, 0.24, 0.26)       # the key ring, dull iron
+
+signal footstep                 # a shoe just planted on the boards
 
 var cam: Camera3D               # the office orbit cam; the walk follows it
 var _idle_t := 0.0              # the breath / glance clock, always running
@@ -51,6 +54,7 @@ var _tails: Node3D
 var _head: Node3D
 var _kit: Node3D                # the belt kit: walkie + keys, swings on stride
 var _ember: MeshInstance3D
+var _step_sign := 0             # the last stride half the beat landed on
 
 
 func _ready() -> void:
@@ -245,6 +249,12 @@ func _animate(delta: float) -> void:
         var sw := sin(_walk_t)
         var breathe := sin(_idle_t * 1.3)
         var b := _blend
+        # a foot plants on every beat flip: iron on boards, for the bus below
+        if moving and is_on_floor():
+                var half := 1 if sw >= 0.0 else -1
+                if half != _step_sign:
+                        _step_sign = half
+                        footstep.emit()
         # the stride pose crossfaded with the idle settle - no snaps either way
         _leg_l.rotation.x = sw * 0.55 * amp
         _leg_r.rotation.x = -sw * 0.55 * amp

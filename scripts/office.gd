@@ -5,6 +5,9 @@ extends Node3D
 ## until the stealth / roguelike / horror / espionage loop replaces them
 ## with mechanics that earn their keep. The HUD is terminal white on black
 ## bars, mono type throughout.
+## Sound (K2a): a small honest bus - room tone bed, the fan loop riding the
+## machine's speed, radio static on the radio cue, the shelf creak on the
+## shelf drop, iron footsteps on the stride. No music, no mixer magic.
 
 const PS1_VIEW := preload("res://scripts/comps/ps1_view.gd")
 const ROOM := preload("res://scripts/office_room.gd")
@@ -21,6 +24,7 @@ const CAM_MIN := Vector3(1.3, 0.5, 1.3)     # the lens stays in the office
 const CAM_MAX := Vector3(26.7, 2.7, 15.45)
 const LOOK_SENS := 0.0042
 const REACH := 1.7
+const SFX := "res://audio/"
 
 # the one spot you can use for now, ON the door's body
 const SPOTS := {
@@ -45,6 +49,15 @@ var _view: Ps1View
 var _cam_pos: Vector3
 var _yaw := 0.0
 var _pitch := 0.22
+var _snd_room: AudioStreamPlayer
+var _snd_fan: AudioStreamPlayer
+var _snd_radio: AudioStreamPlayer
+var _snd_shelf: AudioStreamPlayer
+var _snd_step: AudioStreamPlayer
+var _steps: Array = []
+var _step_rng := RandomNumberGenerator.new()
+var qa_clock := -1.0            # >= 0 pins the room clock (QA captures:
+                                # fan rotation and marker glow freeze in place)
 
 
 func _ready() -> void:
@@ -63,10 +76,26 @@ func _ready() -> void:
         Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
         Ambient.begin_office()
         Ambient.ambient_line.connect(_on_line)
+        Ambient.radio_cue.connect(_on_radio_cue)
+        Ambient.shelf_drop.connect(_on_shelf_drop)
+        _step_rng.seed = 47
+        _build_sound()
+        _player.footstep.connect(_on_footstep)
+
+
+func _qa_time() -> float:
+        # the room's machines run on the wall clock, or on the QA pin when
+        # one is set, so reference captures come out identical every time
+        return qa_clock if qa_clock >= 0.0 else Time.get_ticks_msec() / 1000.0
 
 
 func _exit_tree() -> void:
         Ambient.end_office()
+        # stop the bus before the players die: frees the mix playbacks, so a
+        # scene change never strands a loop mid-breath
+        for p in [_snd_room, _snd_fan, _snd_radio, _snd_shelf, _snd_step]:
+                if p != null:
+                        p.stop()
 
 
 func _build_world() -> void:
@@ -150,7 +179,19 @@ func _process(delta: float) -> void:
         if is_instance_valid(_pause) and not _pause.open \
                         and Input.mouse_mode != Input.MOUSE_MODE_CAPTURED:
                 Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
-        _room.pulse_markers(Time.get_ticks_msec() / 1000.0)
+        var room_t := _qa_time()
+        _room.pulse_markers(room_t)
+        # the fan bus rides the machine: pitch and level follow the speed,
+        # and the stall is allowed to be silent for a breath
+        if _snd_fan != null:
+                var sp: float = _room.fan_speed
+                if sp > 0.04:
+                        if not _snd_fan.playing:
+                                _snd_fan.play()
+                        _snd_fan.pitch_scale = 0.62 + 0.5 * sp
+                        _snd_fan.volume_db = lerpf(-16.0, -7.0, sp)
+                elif _snd_fan.playing:
+                        _snd_fan.stop()
         # the subtitle strip fades after its line has had its moment
         if _sub_t < 6.0:
                 _sub_t += delta
@@ -201,6 +242,52 @@ func _follow_cam() -> void:
         _view.camera.look_at(_player.position + PIVOT)
         _player.visible = _view.camera.position.distance_to(
                         _player.position + PIVOT) > 1.35
+
+
+# --- the sound -----------------------------------------------------------------------
+
+func _build_sound() -> void:
+        # the beds and the cues; everything here was written by gen_sfx.py
+        _snd_room = _speaker(_looped(SFX + "room_tone.wav"), -8.0)
+        _snd_room.play()
+        _snd_fan = _speaker(_looped(SFX + "fan_loop.wav"), -7.0)
+        _snd_radio = _speaker(load(SFX + "radio_static.wav"), -4.0)
+        _snd_shelf = _speaker(load(SFX + "shelf_creak.wav"), -3.0)
+        _snd_step = _speaker(null, -7.0)
+        for i in [1, 2, 3]:
+                _steps.append(load(SFX + "footstep_iron_%d.wav" % i))
+
+
+func _speaker(stream: AudioStream, db: float) -> AudioStreamPlayer:
+        var p := AudioStreamPlayer.new()
+        p.stream = stream
+        p.volume_db = db
+        add_child(p)
+        return p
+
+
+func _looped(path: String) -> AudioStreamWAV:
+        var s: AudioStreamWAV = load(path)
+        s.loop_mode = AudioStreamWAV.LOOP_FORWARD
+        s.loop_begin = 0
+        s.loop_end = s.data.size() / 2        # 16-bit mono frames
+        return s
+
+
+func _on_radio_cue() -> void:
+        _snd_radio.pitch_scale = _step_rng.randf_range(0.9, 1.15)
+        _snd_radio.play()
+
+
+func _on_shelf_drop() -> void:
+        _snd_shelf.pitch_scale = _step_rng.randf_range(0.92, 1.08)
+        _snd_shelf.play()
+
+
+func _on_footstep() -> void:
+        _snd_step.stream = _steps[_step_rng.randi_range(0, _steps.size() - 1)]
+        _snd_step.pitch_scale = _step_rng.randf_range(0.94, 1.06)
+        _snd_step.play()
 
 
 # --- the HUD ------------------------------------------------------------------------

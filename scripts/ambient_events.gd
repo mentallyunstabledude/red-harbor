@@ -9,6 +9,7 @@ extends Node
 ## sfx from there; this node only manages timers and state.
 
 signal ambient_line(text: String)   # one-liner from the radio or city outside
+signal radio_cue                    # the state radio crackles - static sfx
 signal shelf_drop                   # a small creak and slide sfx
 
 const AMBIENT_MIN := 10.0
@@ -76,6 +77,7 @@ func _on_ambient_time() -> void:
         var roll := _rng.randf()
         if roll < 0.40:
                 ambient_line.emit(RADIO_LINES[_rng.randi_range(0, RADIO_LINES.size() - 1)])
+                radio_cue.emit()
         elif roll < 0.80:
                 ambient_line.emit(CITY_LINES[_rng.randi_range(0, CITY_LINES.size() - 1)])
         else:

@@ -4,6 +4,8 @@ extends Node3D
 ## door with a lit hatch, an extractor fan bolted to the east wall, and every
 ## surface wearing its grime. The room is a sealed box - four walls and a
 ## lid - so no camera angle inside it ever opens on the void.
+## The fan is a machine, not dressing: it runs, sputters, stalls and gets
+## kicked back on, and the sound bus reads its speed off fan_speed.
 
 const MAT := preload("res://shaders/ps1_mat.gdshader")
 const WALL_H := 3.0
@@ -34,8 +36,24 @@ var spots := {}                 # name -> Vector3 (world space)
 var _markers: Array[MeshInstance3D] = []
 var _fan: Node3D                # the extractor fan on the east wall, spinning
 
+# the fan machine: the one bit of stateful logic the room owns (K5 - a
+# machine that visibly does things, with sound that follows it down)
+enum { FAN_RUN, FAN_SPUTTER, FAN_STALL }
+const FAN_RUN_TIME := 24.0      # seconds of honest running
+const FAN_SPUTTER_TIME := 2.8   # the bearings complain
+const FAN_STALL_TIME := 3.6     # dark and quiet, then the kick
+const FAN_SPIN := 2.2           # radians a second at full speed
+
+var fan_state: int = FAN_RUN    # read by the sound bus and the smoke gate
+var fan_speed := 1.0            # 0..1, drives the spin and the fan loop
+var _fan_t := 0.0
+var _fan_rot := 0.0
+var _fan_last := -1.0
+var _fan_rng := RandomNumberGenerator.new()
+
 
 func _ready() -> void:
+        _fan_rng.seed = 1947           # deterministic cycle: QA can walk it
         for key in SPOT_POINTS:
                 spots[key] = SPOT_POINTS[key]
         _build_shell()
@@ -54,11 +72,39 @@ func spot(key: String) -> Vector3:
 
 
 func pulse_markers(t: float) -> void:
+        var dt := 0.0 if _fan_last < 0.0 else maxf(0.0, t - _fan_last)
+        _fan_last = t
+        _fan_step(dt)
         for m in _markers:
                 (m.material_override as ShaderMaterial).set_shader_parameter(
                                 "glow", 0.4 + 0.18 * sin(t * 2.6))
-        if _fan != null:
-                _fan.rotation.x = t * 2.2        # the fan turns, slow and heavy
+
+
+func _fan_step(dt: float) -> void:
+        # the visible logic cycle: run, sputter, stall, kick. Headless-safe:
+        # the smoke walks it with fixed ticks and asserts every transition.
+        if _fan == null:
+                return
+        _fan_t += dt
+        match fan_state:
+                FAN_RUN:
+                        fan_speed = 1.0
+                        if _fan_t >= FAN_RUN_TIME:
+                                _fan_t = 0.0
+                                fan_state = FAN_SPUTTER
+                FAN_SPUTTER:
+                        fan_speed = 0.5 + 0.5 * absf(sin(_fan_t * 8.5)) \
+                                        * _fan_rng.randf_range(0.8, 1.0)
+                        if _fan_t >= FAN_SPUTTER_TIME:
+                                _fan_t = 0.0
+                                fan_state = FAN_STALL
+                FAN_STALL:
+                        fan_speed = maxf(0.0, 0.8 - _fan_t * 0.9)
+                        if _fan_t >= FAN_STALL_TIME:
+                                _fan_t = 0.0
+                                fan_state = FAN_RUN     # somebody kicked it
+        _fan_rot += fan_speed * FAN_SPIN * dt
+        _fan.rotation.x = _fan_rot
 
 
 # --- the material factory -------------------------------------------------------------

@@ -43,13 +43,27 @@ office loop feels right.
 The diorama trick: the room is a sealed box - four walls and a lid - so no
 camera angle inside it ever opens on the void.
 
+## The sound (code-synthesized, like everything else)
+
+- `assets_src/gen_sfx.py` - the sound generator: room tone, the fan cycle,
+  radio static, iron footsteps and the shelf creak, written as raw WAVs
+  into `audio/`. Deterministic seeds, no recorded assets.
+- the office runs the smallest honest bus: a room-tone bed, a fan loop
+  whose pitch and level ride the machine's speed, radio crackle on the
+  radio cue, the shelf creak on the shelf drop, and footsteps on the
+  stride beat.
+- the extractor fan is a machine now: it runs, sputters, stalls and kicks
+  back on a seeded cycle, and the sound follows it down. The smoke suite
+  walks the whole cycle headlessly.
+
 ## Structure
 
 ```
 scripts/
   run_state.gd      autoload "Run": the case bag and tonight's dealt case
-  office.gd         the office scene: world build, HUD, input
-  office_room.gd    the PS1 diorama: walls, props, steel, all in boxes
+  office.gd         the office scene: world build, HUD, input, the sound bus
+  office_room.gd    the PS1 diorama: walls, props, steel, all in boxes;
+                    owns the fan machine (run / sputter / stall / kick)
   pi3d.gd           the PI: a low-poly box rig rebuilt off the reference
                     sheet - khaki shirt with pockets, proud tie/braces/buckle
                     geometry, the belt kit (walkie + keys) swinging on the
@@ -66,9 +80,12 @@ scripts/
 assets_src/
   gen_textures.py   regenerates assets/tex/ (painted + Bayer dithered);
                     the PI sheets are painted per BoxMesh face cell (3x2)
+  gen_sfx.py        regenerates audio/ (synthesized WAVs, seeded)
 tests/
-  smoke.tscn        headless assertions: `godot --headless --path . res://tests/smoke.tscn`
+  smoke.tscn        headless assertions (7 domains, ends SMOKE: ALL PASS):
+                    `godot --headless --path . res://tests/smoke.tscn`
   capture.tscn      screenshot harness: `godot --path . res://tests/capture.tscn -- --scene=office --out=/tmp/shot.png`
+                    reference still: `-- --scene=office --seed=7 --clock=3.7 --strip=grain --ref=save` (or `--ref=check`)
   pi_closeup.tscn   PI model inspector: orbit the rig idle or mid-stride for
                     body/face QA: `... pi_closeup.tscn -- --yaw=0 --look=head --out=/tmp/face.png`
 ```
@@ -85,3 +102,11 @@ godot --headless --path . res://tests/smoke.tscn
 ```
 
 Saves live in `user://red_harbor.cfg`.
+
+## Batch 1 of the rebuild
+
+This tree carries batch 1 of the rebuild ladder (docs/BATCH1.md): the K0
+debris purge, the K1 frame gate in the smoke suite, and K2a - the office
+has a sound bus and the fan is a machine. Nothing has been committed to
+the repo yet; test it locally first and commit when it passes on your
+machine.

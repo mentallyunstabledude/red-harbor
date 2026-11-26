@@ -8,6 +8,10 @@ extends Node
 ##   3. THE DOOR - the door deals the next file
 ##   4. THE MENU - the title and the ENTER prompt exist
 ##   5. THE AMBIENT - the event clock runs without a scene
+##   6. THE FRAME - the PS1 bar as contract law: the tube, the post pass,
+##      ps1_mat on every mesh with snap and affine on, the CRT menu (K1)
+##   7. THE SOUND - the wav beds load, the bus plays, the fan machine
+##      walks its cycle headlessly (K2a)
 
 var _fails := 0
 
@@ -87,8 +91,13 @@ func _check_office() -> void:
 
         var pause: Node = office.get("_pause")
         _check(pause != null, "the office carries the pause menu")
+        _check_frame(office)
+        _check_sound(office)
         office.queue_free()
-        await get_tree().process_frame
+        # pump the mix: the dummy audio driver releases the stopped loop
+        # playbacks a few frames after the bus goes down
+        for i in 10:
+                await get_tree().process_frame
 
 
 # --- 4. the menu -------------------------------------------------------------------------
@@ -99,6 +108,7 @@ func _check_menu() -> void:
         var title := menu.get_node_or_null("Stage/Title")
         _check(title != null, "the menu springs the title in")
         _check(menu.get_node_or_null("Stage/Prompt") != null, "the menu keeps the ENTER prompt")
+        _check(_has_post(menu, "crt_menu.gdshader"), "the menu sits behind the crt tube")
         menu.queue_free()
         await get_tree().process_frame
 
@@ -122,3 +132,81 @@ func _all(node: Node) -> Array:
                 for c in n.get_children():
                         stack.append(c)
         return out
+
+
+# --- 6. the frame -----------------------------------------------------------------------
+
+func _check_frame(office: Node3D) -> void:
+        # K1: the bar becomes contract law. Every pillar the office meets in
+        # code is asserted here, so no refactor can quietly modernize it.
+        _check(ProjectSettings.get_setting(
+                        "rendering/textures/canvas_textures/default_texture_filter") == 0,
+                        "the canvas samples nearest")
+        _check(ProjectSettings.get_setting("display/window/size/viewport_width") == 640
+                        and ProjectSettings.get_setting("display/window/size/viewport_height") == 360,
+                        "the canvas is 640x360")
+        var view: Node = office.get("_view")
+        _check(_has_post(view, "ps1_post.gdshader"),
+                        "ps1_post is the terminal pass on the tube")
+        var meshes := 0
+        var wrong_mat := 0
+        var off_machine := 0
+        for c in _all(office):
+                if c is MeshInstance3D:
+                        meshes += 1
+                        var m: Material = c.material_override
+                        if m == null and c.mesh != null and c.mesh.get_surface_count() > 0:
+                                m = c.mesh.surface_get_material(0)
+                        if m is ShaderMaterial and (m as ShaderMaterial).shader != null \
+                                        and ((m as ShaderMaterial).shader as Shader).resource_path \
+                                                        .ends_with("ps1_mat.gdshader"):
+                                var a = (m as ShaderMaterial).get_shader_parameter("affine")
+                                if not (a == null or a == true):
+                                        off_machine += 1
+                                var g = (m as ShaderMaterial).get_shader_parameter("snap_grid")
+                                if not (g == null or g == Vector2(240.0, 135.0)):
+                                        off_machine += 1
+                        else:
+                                wrong_mat += 1
+        _check(wrong_mat == 0, "every mesh wears ps1_mat (%d meshes)" % meshes)
+        _check(off_machine == 0, "snap and affine stay on everywhere")
+
+
+func _has_post(root: Node, tail: String) -> bool:
+        for c in _all(root):
+                if c is ColorRect and c.material is ShaderMaterial:
+                        var sh: Shader = (c.material as ShaderMaterial).shader
+                        if sh != null and sh.resource_path.ends_with(tail):
+                                return true
+        return false
+
+
+# --- 7. the sound ------------------------------------------------------------------------
+
+func _check_sound(office: Node3D) -> void:
+        # K2a: the silence dies. The beds load as real wavs, the room tone
+        # is on the air, and the fan machine walks its whole cycle headlessly.
+        for n in ["room_tone", "fan_loop", "radio_static",
+                        "footstep_iron_1", "footstep_iron_2", "footstep_iron_3",
+                        "shelf_creak"]:
+                _check(load("res://audio/%s.wav" % n) is AudioStreamWAV,
+                                "the %s bed is a real wav" % n)
+        var room_p: Node = office.get("_snd_room")
+        _check(room_p != null and room_p.playing, "the room tone is on the air")
+        var fan_p: Node = office.get("_snd_fan")
+        _check(fan_p != null and fan_p.stream != null, "the fan bus waits on the machine")
+        var room: OfficeRoom = office.get("_room")
+        var saw := {}
+        var zero := false
+        for i in 80:
+                room._fan_step(1.0)
+                saw[room.fan_state] = true
+                zero = zero or room.fan_speed == 0.0
+        _check(saw.has(room.FAN_SPUTTER) and saw.has(room.FAN_STALL),
+                        "the fan sputters and stalls on its cycle")
+        _check(zero, "the fan coasts to a full stop")
+        _check(room.fan_state == room.FAN_RUN, "the fan kicks back on after the stall")
+        _check(Ambient.get_signal_connection_list("radio_cue").size() > 0,
+                        "the radio cue feeds the office")
+        _check(Ambient.get_signal_connection_list("shelf_drop").size() > 0,
+                        "the shelf drop feeds the office")

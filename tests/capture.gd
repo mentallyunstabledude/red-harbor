@@ -3,6 +3,9 @@ extends Node
 ## User args start after the `--` separator and use key=value:
 ##   xvfb-run -s "-screen 0 1280x720x24" godot --path . --resolution 1280x720 \
 ##       res://tests/capture.tscn -- --scene=office --out=/tmp/shot.png
+## The reference still (K1's visual regression pin):
+##   ... -- --scene=office --ref=save     writes tests/ref/office_ref.png
+##   ... -- --scene=office --ref=check    diffs against it, exit 2 on drift
 
 const SCENES := {
         "menu": "res://scenes/menu.tscn",
@@ -26,6 +29,8 @@ func _ready() -> void:
         print("CAPTURE: loading ", path)
         await get_tree().process_frame          # root is busy during _ready
         var inst: Node = load(path).instantiate()
+        if _args.has("clock") and inst.get("qa_clock") != null:
+                inst.set("qa_clock", float(_args["clock"]))
         if _args.has("seed") and inst.get("deal_seed") != null:
                 inst.set("deal_seed", int(_args["seed"]))
         get_tree().root.add_child(inst)
@@ -77,8 +82,64 @@ func _ready() -> void:
                                 cam.global_position, cam.global_position + dir * 60.0)
                 var hit: Dictionary = space.intersect_ray(q)
                 print("RAY hit=", hit)
-        _snap(str(_args.get("out", "/tmp/shot.png")))
+        # grab the frame while the scene is alive, then tear the scene down
+        # cleanly (bus down, players freed) so nothing leaks at cleanup
+        var img := get_viewport().get_texture().get_image()
+        await _quiet(inst)
+        inst.queue_free()
+        for i in 6:
+                await get_tree().process_frame
+        if _args.has("ref"):
+                # the committed still: pin the frame once, then diff forever
+                var ok := _ref(img, str(_args["ref"]), str(_args.get("scene", "office")))
+                get_tree().quit(0 if ok else 2)
+                return
+        _snap(img, str(_args.get("out", "/tmp/shot.png")))
         get_tree().quit()
+
+
+func _quiet(inst: Node) -> void:
+        # take the office bus down before quitting so the mix playbacks die
+        # with the scene, not at ObjectDB cleanup
+        for key in ["_snd_room", "_snd_fan", "_snd_radio", "_snd_shelf", "_snd_step"]:
+                var p: Node = inst.get(key)
+                if p != null:
+                        p.stop()
+        for i in 8:
+                await get_tree().process_frame
+
+
+func _ref(img: Image, mode: String, scene: String) -> bool:
+        var path := ProjectSettings.globalize_path("res://tests/ref/%s_ref.png" % scene)
+        DirAccess.make_dir_recursive_absolute(path.get_base_dir())
+        if mode == "save":
+                img.save_png(path)
+                print("REF: saved ", path, " ", img.get_size())
+                return true
+        if not FileAccess.file_exists(path):
+                print("REF: no reference at ", path, " - run --ref=save first")
+                return false
+        var ref := Image.load_from_file(path)
+        if ref == null or ref.get_size() != img.get_size():
+                print("REF: DRIFT (size mismatch)")
+                return false
+        var a := img.get_data()
+        var b := ref.get_data()
+        if a.size() != b.size():
+                print("REF: DRIFT (format mismatch)")
+                return false
+        var drift := 0
+        var px := a.size() / 4
+        for i in range(0, a.size(), 4):
+                if absi(a[i] - b[i]) > 8 or absi(a[i + 1] - b[i + 1]) > 8 \
+                                or absi(a[i + 2] - b[i + 2]) > 8:
+                        drift += 1
+        var pct := 100.0 * drift / float(px)
+        if pct <= 0.5:
+                print("REF: MATCH (%.2f%% off)" % pct)
+                return true
+        print("REF: DRIFT %.2f%% of pixels beyond 8/255" % pct)
+        return false
 
 
 func _ray_normal(cam: Camera3D, uv: Vector2) -> Vector3:
@@ -112,8 +173,7 @@ func _frames(n: int) -> void:
                 await get_tree().process_frame
 
 
-func _snap(path: String) -> void:
-        var img := get_viewport().get_texture().get_image()
+func _snap(img: Image, path: String) -> void:
         img.save_png(path)
         print("CAPTURE: saved ", path, " ", img.get_size())
         var colors := {}
